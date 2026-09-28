@@ -24,6 +24,20 @@ class FailedRepo:
     """failed_batches 表：暂存解析失败的批次条目"""
 
     @_auto_reconnect
+    def count_failed_items(self, content_type: str) -> int:
+        """刷新计数不回传全部原文/被拒译文，也不逐批执行清理写入。"""
+        if content_type not in ('dialogue', 'ui'):
+            raise ValueError('未知内容类型')
+        table = 'dialogues' if content_type == 'dialogue' else 'ui_texts'
+        row = self._conn.execute(
+            f'''SELECT COUNT(DISTINCT t.id) AS cnt
+                FROM failed_batches AS b, json_each(b.items_json) AS item
+                JOIN {table} AS t ON t.id=json_extract(item.value, '$.id')
+                WHERE b.content_type=? AND t.is_translated=0''',
+            (content_type,)).fetchone()
+        return row['cnt']
+
+    @_auto_reconnect
     def add_failed_batch(self, content_type: str, items: list[dict],
                          error: str = '') -> int:
         cur = self._conn.execute(

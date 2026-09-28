@@ -57,9 +57,11 @@ class TranslationService:
 
         可用 token = 模型上下文窗口 - 已占用部分（模板常量 + 术语表/角色特征实测）
         """
+        requested = max(0, self.translator.config.context_lines)
         return TokenBudget(self.max_context_k * 1024).context_line_count(
             glossary_tokens=count_tokens(glossary_text),
             profile_tokens=count_tokens(character_profile),
+            min_lines=0, max_lines=requested,
         )
 
     @property
@@ -255,11 +257,10 @@ class TranslationService:
                 text = translated_map.get(i)
                 if not text:
                     continue
-                if content_type == 'ui':
-                    self.db.update_ui_text(it['id'], text)
-                else:
-                    self.db.update_dialogue(it['id'], text)
-                saved[it['id']] = text
+                text = self.db.save_translation_if_unchanged(
+                    content_type, it['id'], it.get('translated_text', ''), text)
+                if text:
+                    saved[it['id']] = text
             if terms:
                 for t in terms:
                     t['term_type'] = 'other'
