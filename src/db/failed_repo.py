@@ -29,11 +29,15 @@ class FailedRepo:
         if content_type not in ('dialogue', 'ui'):
             raise ValueError('未知内容类型')
         table = 'dialogues' if content_type == 'dialogue' else 'ui_texts'
+        # 固定连接顺序：只展开失败记录，再按 ID 查台词。普通 JOIN 可能
+        # 先遍历全部未译台词，为每一句重复解析所有失败 JSON，阻塞数据库锁。
         row = self._conn.execute(
             f'''SELECT COUNT(DISTINCT t.id) AS cnt
-                FROM failed_batches AS b, json_each(b.items_json) AS item
-                JOIN {table} AS t ON t.id=json_extract(item.value, '$.id')
-                WHERE b.content_type=? AND t.is_translated=0''',
+                FROM failed_batches AS b
+                CROSS JOIN json_each(b.items_json) AS item
+                CROSS JOIN {table} AS t
+                WHERE b.content_type=? AND t.is_translated=0
+                  AND t.id=json_extract(item.value, '$.id')''',
             (content_type,)).fetchone()
         return row['cnt']
 

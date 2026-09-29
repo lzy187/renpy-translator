@@ -89,6 +89,28 @@ def test_failed_count_excludes_duplicates_and_manually_corrected_rows(db):
     assert db.count_failed_items('ui') == 0
 
 
+@pytest.mark.parametrize('kind,table', [('dialogue', 'dialogues'), ('ui', 'ui_texts')])
+def test_failed_count_does_not_scan_unrelated_untranslated_rows(db, kind, table):
+    db._conn.executemany(f'INSERT INTO {table} (original_text) VALUES (?)',
+                        [('Hello',)] * 30000)
+    db._conn.commit()
+    db.add_failed_batch(kind, [{'id': 1}, {'id': 2}])
+    # A VM-instruction budget detects a full-project scan without wall-clock
+    # timing assumptions. Counting two pending IDs should take little work.
+    calls = 0
+
+    def limit_work():
+        nonlocal calls
+        calls += 1
+        return calls > 100
+
+    db._conn.set_progress_handler(limit_work, 1000)
+    try:
+        assert db.count_failed_items(kind) == 2
+    finally:
+        db._conn.set_progress_handler(None, 0)
+
+
 def test_replace_api_preview_confirm_conflict_and_validation(db):
     from types import SimpleNamespace
     from fastapi import FastAPI
