@@ -285,9 +285,17 @@ async def _prune_failed_batches(state: AppState, content_type: str) -> list:
     """列出暂存批次并顺手自愈：已全部译出的删除、部分译出的回写剩余条目"""
     recs = await state.db_call(state.db.list_failed_batches, content_type)
     kept = []
-    for rec in recs:
-        remaining = await state.db_call(
+    seen_ids = set()
+    # 多次取消/重跑会为同一句留下多份记录。保留最新的失败原因和候选译文，
+    # 同时让列表和手动重试只处理一次该条目。
+    for rec in reversed(recs):
+        untranslated = await state.db_call(
             state.db.filter_untranslated_items, content_type, rec['items'])
+        remaining = []
+        for item in untranslated:
+            if item['id'] not in seen_ids:
+                seen_ids.add(item['id'])
+                remaining.append(item)
         if not remaining:
             await state.db_call(state.db.delete_failed_batch, rec['id'])
         else:
@@ -296,7 +304,7 @@ async def _prune_failed_batches(state: AppState, content_type: str) -> list:
                     state.db.update_failed_batch_items, rec['id'], remaining)
             rec['items'] = remaining
             kept.append(rec)
-    return kept
+    return list(reversed(kept))
 
 
 @router.get('/texts/{content_type}/failed-batches')

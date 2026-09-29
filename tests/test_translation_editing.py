@@ -140,6 +140,32 @@ def test_replace_api_preview_confirm_conflict_and_validation(db):
         assert client.get('/api/current/texts/ui/failed-batches/count').json() == {'count': 0}
 
 
+@pytest.mark.parametrize('kind', ['dialogue', 'ui'])
+async def test_failed_list_prunes_repeated_attempts_and_preserves_latest_details(db, kind):
+    from types import SimpleNamespace
+    from server.api.texts import list_failed_items
+
+    insert = db.insert_dialogues if kind == 'dialogue' else db.insert_ui_texts
+    update = db.update_dialogue if kind == 'dialogue' else db.update_ui_text
+    insert([dict(original_text='One'), dict(original_text='Two')])
+    db.add_failed_batch(kind, [{'id': 1, 'reason': 'old'}, {'id': 2}])
+    db.add_failed_batch(kind, [{'id': 1, 'reason': 'new', 'rejected': 'candidate'},
+                               {'id': 1, 'reason': 'duplicate'}, {'id': 999}])
+    update(2, '二')
+
+    async def db_call(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    state = SimpleNamespace(db=db, db_call=db_call)
+    result = await list_failed_items(kind, state)
+    assert result['count'] == db.count_failed_items(kind) == 1
+    assert result['items'][0]['id'] == 1
+    assert result['items'][0]['reason'] == 'new'
+    assert result['items'][0]['rejected'] == 'candidate'
+    assert sum(len(r['items']) for r in db.list_failed_batches(kind)) == 1
+    assert await list_failed_items(kind, state) == result
+
+
 async def test_cancel_after_batch_preserves_results_and_skips_final_retry(db):
     from types import SimpleNamespace
     from server.api.texts import _make_translate_job
